@@ -1,5 +1,5 @@
 {
-  "name": "n8n-nodes-netsuite",
+  "name": "n8n-netsuite-node",
   "version": "0.7.5",
   "description": "n8n node for NetSuite using the REST API",
   "license": "MIT",

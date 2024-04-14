@@ -1,11 +1,8 @@
 {
-	"node": "n8n-nodes-netsuite.netsuite",
+	"node": "n8n-netsuite-node.netsuite",
 	"nodeVersion": "1.0",
 	"codexVersion": "1.0",
-	"categories": [
-		"Finance & Accounting",
-		"Sales"
-	],
+	"categories": ["Finance & Accounting", "Sales"],
 	"resources": {
 		"credentialDocumentation": [
 			{
