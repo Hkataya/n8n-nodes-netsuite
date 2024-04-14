@@ -22,9 +22,8 @@ import {
 	nodeDescription,
 } from './NetSuite.node.options';
 
-import { makeRequest } from '@fye/netsuite-rest-api';
-
 import pLimit from 'p-limit';
+import { NetsuiteApiClient } from '../../api/index';
 
 const debug = debuglog('n8n-nodes-netsuite');
 
@@ -32,13 +31,23 @@ const handleNetsuiteResponse = (fns: IExecuteFunctions, response: INetSuiteRespo
 	// debug(response);
 	debug(`Netsuite response:`, response.statusCode, response.body);
 	let body: JsonObject = {};
-	const {
-		title: webTitle = undefined,
-		// code: restletCode = undefined,
-		'o:errorCode': webCode,
-		'o:errorDetails': webDetails,
-		message: restletMessage = undefined,
-	} = response.body;
+	let webTitle = undefined
+	let webCode = undefined;
+	let webDetails = undefined;
+	let restletMessage = undefined;
+	if (response.body) {
+		const {
+			title = undefined,
+			'o:errorCode': errorCode,
+			'o:errorDetails': errorDetails,
+			message = undefined,
+		} = response.body;
+
+		webTitle = title;
+		webCode = errorCode;
+		webDetails = errorDetails;
+		restletMessage = message;
+	}
 	if (!(response.statusCode && response.statusCode >= 200 && response.statusCode < 400)) {
 		let message = webTitle || restletMessage || webCode || response.statusText;
 		if (webDetails && webDetails.length > 0) {
@@ -83,15 +92,19 @@ const handleNetsuiteResponse = (fns: IExecuteFunctions, response: INetSuiteRespo
 	return { json: body };
 };
 
-const getConfig = (credentials: INetSuiteCredentials) => ({
-	netsuiteApiHost: credentials.hostname,
-	consumerKey: credentials.consumerKey,
-	consumerSecret: credentials.consumerSecret,
-	netsuiteAccountId: credentials.accountId,
-	netsuiteTokenKey: credentials.tokenKey,
-	netsuiteTokenSecret: credentials.tokenSecret,
-	netsuiteQueryLimit: 1000,
-});
+
+const getClient = (credentials: INetSuiteCredentials) => {	
+  return new NetsuiteApiClient({
+  consumer_key: credentials.consumerKey,
+  consumer_secret_key: credentials.consumerSecret,
+  token: credentials.tokenKey,
+  token_secret: credentials.tokenSecret,
+  realm: credentials.accountId,
+  base_url: credentials.hostname,
+});		
+};
+
+
 
 export class NetSuite implements INodeType {
 	description: INodeTypeDescription = nodeDescription;
@@ -138,7 +151,12 @@ export class NetSuite implements INodeType {
 		nodeContext.offset = offset;
 		// debug('requestData', requestData);
 		while ((returnAll || returnData.length < limit) && hasMore === true) {
-			const response = await makeRequest(getConfig(credentials), requestData);
+			const client = getClient(credentials)
+			const response = await client
+			.request({
+				path: requestData.path,
+				method: requestData.method,
+			})
 			const body: JsonObject = handleNetsuiteResponse(fns, response);
 			const { hasMore: doContinue, items, links, offset, count, totalResults } = (body.json as INetSuitePagedBody);
 			if (doContinue) {
@@ -178,7 +196,6 @@ export class NetSuite implements INodeType {
 		const requestType = NetSuiteRequestType.SuiteQL;
 		const params = new URLSearchParams();
 		const returnData: INodeExecutionData[] = [];
-		const config = getConfig(credentials);
 		let prefix = '?';
 		if (returnAll !== true) {
 			limit = fns.getNodeParameter('limit', itemIndex) as number || limit;
@@ -186,20 +203,26 @@ export class NetSuite implements INodeType {
 			params.set('offset', String(offset));
 		}
 		params.set('limit', String(limit));
-		config.netsuiteQueryLimit = limit;
+
 		prefix += params.toString();
 		const requestData: INetSuiteRequestOptions = {
 			method,
 			requestType,
 			query,
-			path: `services/rest/query/${apiVersion}/suiteql${prefix}`,
+			path: `query/${apiVersion}/suiteql${prefix}`,
 		};
 		nodeContext.hasMore = hasMore;
 		nodeContext.count = limit;
 		nodeContext.offset = offset;
 		debug('requestData', requestData);
 		while ((returnAll || returnData.length < limit) && hasMore === true) {
-			const response = await makeRequest(config, requestData);
+			const client = getClient(credentials)
+			const response = await client
+			.request({
+				path: requestData.path,
+				method: requestData.method,
+				body: requestData.query
+			})
 			const body: JsonObject = handleNetsuiteResponse(fns, response);
 			const { hasMore: doContinue, items, links, count, totalResults, offset } = (body.json as INetSuitePagedBody);
 			if (doContinue) {
@@ -243,10 +266,14 @@ export class NetSuite implements INodeType {
 		const requestData = {
 			method: 'GET',
 			requestType: NetSuiteRequestType.Record,
-			path: `services/rest/record/${apiVersion}/${recordType}/${internalId}${q ? `?${q}` : ''}`,
+			path: `record/${apiVersion}/${recordType}/${internalId}${q ? `?${q}` : ''}`,
 		};
-		const response = await makeRequest(getConfig(credentials), requestData);
-		if (item) response.body.orderNo = item.json.orderNo;
+		const client = getClient(credentials)
+		const response = await client.request({
+				path: requestData.path,
+				method: requestData.method,
+		})
+		if (response.body && item) response.body.orderNo = item.json.orderNo;
 		return handleNetsuiteResponse(fns, response);
 	}
 
@@ -258,9 +285,14 @@ export class NetSuite implements INodeType {
 		const requestData = {
 			method: 'DELETE',
 			requestType: NetSuiteRequestType.Record,
-			path: `services/rest/record/${apiVersion}/${recordType}/${internalId}`,
+			path: `record/${apiVersion}/${recordType}/${internalId}`,
 		};
-		const response = await makeRequest(getConfig(credentials), requestData);
+		const client = getClient(credentials)
+		const response = await client
+			.request({
+				path: requestData.path,
+				method: requestData.method,
+			})
 		return handleNetsuiteResponse(fns, response);
 	}
 
@@ -272,10 +304,16 @@ export class NetSuite implements INodeType {
 		const requestData: INetSuiteRequestOptions = {
 			method: 'POST',
 			requestType: NetSuiteRequestType.Record,
-			path: `services/rest/record/${apiVersion}/${recordType}`,
+			path: `record/${apiVersion}/${recordType}`,
 		};
 		if (query) requestData.query = query;
-		const response = await makeRequest(getConfig(credentials), requestData);
+			const client = getClient(credentials)
+			const response = await client
+			.request({
+				path: requestData.path,
+				method: requestData.method,
+				body: requestData.query
+			})
 		return handleNetsuiteResponse(fns, response);
 	}
 
@@ -288,10 +326,16 @@ export class NetSuite implements INodeType {
 		const requestData: INetSuiteRequestOptions = {
 			method: 'PATCH',
 			requestType: NetSuiteRequestType.Record,
-			path: `services/rest/record/${apiVersion}/${recordType}/${internalId}`,
+			path: `record/${apiVersion}/${recordType}/${internalId}`,
 		};
 		if (query) requestData.query = query;
-		const response = await makeRequest(getConfig(credentials), requestData);
+			const client = getClient(credentials)
+			const response = await client
+			.request({
+				path: requestData.path,
+				method: requestData.method,
+				body: requestData.query
+			})
 		return handleNetsuiteResponse(fns, response);
 	}
 
@@ -317,8 +361,14 @@ export class NetSuite implements INodeType {
 		};
 		if (query && !['GET', 'HEAD', 'OPTIONS'].includes(method)) requestData.query = query;
 		// debug('requestData', requestData);
-		const response = await makeRequest(getConfig(credentials), requestData);
-
+			const client = getClient(credentials)
+			const response = await client
+			.request({
+				path: requestData.path,
+				method: requestData.method,
+				body: requestData.query
+			})
+		
 		if (response.body) {
 			nodeContext.hasMore = response.body.hasMore;
 			nodeContext.count = response.body.count;
